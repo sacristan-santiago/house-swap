@@ -1,13 +1,13 @@
 dependencies:
   - smartcontractkit/chainlink@2.8.0
- 
+  - aave/aave-v3-core@1.19.2
   - kleros/erc-792@8.0.0
 
 compiler:
   solc:
     remappings:
     - '@chainlink=smartcontractkit/chainlink@2.8.0'
-    
+    - '@aave/core-v3=aave/aave-v3-core@1.19.2'
     - '@kleros/erc-792=kleros/erc-792@8.0.0'
 
 dotenv: .env
@@ -15,3 +15,7 @@ dotenv: .env
 wallets:
   from_key: ${PRIVATE_KEY}
 
+networks:
+  mainnet-fork:
+    weth-token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+    pool-addresses-provider: '0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e'
