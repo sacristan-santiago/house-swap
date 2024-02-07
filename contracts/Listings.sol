@@ -5,7 +5,7 @@ pragma solidity >=0.7.0 <0.9.0;
 import {IListing} from "../interfaces/IListing.sol";
 
 contract Listings is IListing {
-    uint256 listingCount;
+    uint256 public listingCount;
 
     mapping (uint256 listingId => Listing) public listings;
 

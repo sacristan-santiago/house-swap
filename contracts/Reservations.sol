@@ -1,26 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity ^0.8.20;
 
+import {IArbitrable} from "@kleros/erc-792/contracts/IArbitrable.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {IListing} from "../interfaces/IListing.sol";
 import {Escrow} from "./Escrow.sol";
-import {IArbitrable} from "../interfaces/IArbitrable.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 contract Reservations {
     //Variables
     address public owner = msg.sender;
     IListing internal listingContract;
-    AggregatorV3Interface internal dataFeed;
+    AggregatorV3Interface internal aggregator;
     Escrow escrow;
-    uint256 internal ReservationCount;
+    uint256 public reservationCount;
     uint256 reclamationPeriod = 7 days;
     uint256 arbitrationFeeReclamationPeriod = 30 days;
-    uint256 cancelationPeriod = 7 days;
 
     //Mappings
-    mapping(address => uint256[]) public hostReservations;
-    mapping(address => uint256[]) public guestReservations;
     mapping(uint256 => Reservation) public reservations;
 
     //Events
@@ -31,37 +28,38 @@ contract Reservations {
         uint256 id;
         uint256 listing;
         uint startDate;
-        uint endDate;
+        uint duration;
         address host;
         address guest;
         uint256 charge;
         uint256 tx;
     }
-    enum Status {
-        Open,
-        Closed
-    }
 
-    constructor(address _listingContract, address _escrow) {
-        ReservationCount = 0;
-        listingContract = IListing(_listingContract); // Initialize the instance with the Listing contract address
-        dataFeed = AggregatorV3Interface(
-            0x694AA1769357215DE4FAC081bf1f309aDC325306
-        ); //ZEPOLIA TESTNET
+    constructor(
+        address _listingContract,
+        address _aggregator,
+        address _escrow
+    ) {
+        reservationCount = 0;
+        listingContract = IListing(_listingContract);
+        aggregator = AggregatorV3Interface(_aggregator); 
         escrow = Escrow(_escrow);
     }
 
     function reserve(
         uint256 _listingId,
         uint256 _startDate,
-        uint256 _endDate
+        uint256 _duration
     ) public payable {
         //Verify payment
         IListing.Listing memory listing = listingContract.getListing(
             _listingId
         );
+
+        _duration = (_duration) / 1 days;
+
         uint256 reservationCharge = dollarsToWei(
-            ((_endDate - _startDate) / 60 / 60 / 24) * listing.price,
+            _duration * listing.price,
             getUSDPrice()
         );
         require(
@@ -69,30 +67,40 @@ contract Reservations {
             "Not enough ETH to make reservation"
         );
 
+        require(
+            _startDate >= block.timestamp,
+            "Start date must be in the future"
+        );
+
         //Escrow Payment
+        int256 _cancelationPeriod = int256(_startDate) -
+            int256(block.timestamp) -
+            int256(listing.cancelationPeriod);
         uint256 _tx = escrow.newTransaction{value: reservationCharge}({
             _payee: payable(listing.owner),
             _payer: payable(msg.sender),
-            _reclamationPeriod: block.timestamp - _endDate + reclamationPeriod,
+            _reclamationPeriod: (_startDate + _duration) -
+                block.timestamp +
+                reclamationPeriod,
             _arbitrationFeeDepositPeriod: arbitrationFeeReclamationPeriod,
-            _cancelationPeriod: _startDate - block.timestamp - reclamationPeriod
+            _cancelationPeriod: _cancelationPeriod > 0
+                ? uint256(_cancelationPeriod)
+                : 0
         });
 
         //Save Reservation
-        ReservationCount++;
-        guestReservations[msg.sender].push(ReservationCount);
-        hostReservations[listing.owner].push(ReservationCount);
-        reservations[ReservationCount] = Reservation({
-            id: ReservationCount,
+        reservationCount++;
+        reservations[reservationCount] = Reservation({
+            id: reservationCount,
             listing: _listingId,
             startDate: _startDate,
-            endDate: _endDate,
+            duration: _duration,
             host: listing.owner,
             guest: msg.sender,
             charge: reservationCharge,
             tx: _tx
         });
-        emit newReservation(ReservationCount, listing.owner, msg.sender);
+        emit newReservation(reservationCount, listing.owner, msg.sender);
 
         //Refund excess to sender
         payable(msg.sender).transfer(msg.value - reservationCharge);
@@ -100,46 +108,22 @@ contract Reservations {
 
     function cancelReservation(uint256 _reservationId) public {
         Reservation memory reservation = reservations[_reservationId];
+        uint256 cancelationPeriod = listingContract
+            .getListing(reservation.listing)
+            .cancelationPeriod;
         require(
-            reservation.startDate - cancelationPeriod < block.timestamp,
-            "Cannot cancel a reservation after start date"
+            block.timestamp < reservation.startDate - cancelationPeriod,
+            "Too late to cancel reservation."
         );
 
         escrow.cancelTransaction(reservation.tx, reservation.guest);
 
-        //Delete host reservation
-        uint256[] memory _hostReservations = hostReservations[reservation.host];
-        for (uint256 i = 0; i < _hostReservations.length; i++) {
-            if (_hostReservations[i] == _reservationId) {
-                hostReservations[reservation.host][i] = hostReservations[
-                    reservation.host
-                ][_hostReservations.length - 1];
-                hostReservations[reservation.host].pop();
-                break;
-            }
-        }
-
-        //Delete guest reservation
-        uint256[] memory _gestReservations = guestReservations[
-            reservation.host
-        ];
-        for (uint256 i = 0; i < _gestReservations.length; i++) {
-            if (_gestReservations[i] == _reservationId) {
-                guestReservations[reservation.guest][i] = guestReservations[
-                    reservation.guest
-                ][_gestReservations.length - 1];
-                guestReservations[reservation.guest].pop();
-                break;
-            }
-        }
-
         delete reservations[_reservationId];
     }
 
-    function getUSDPrice() private pure returns (uint256) {
-        //(,int answer,,,) = dataFeed.latestRoundData();
-        //return uint256(answer * 10**10); // USD/ETH * 10**18
-        return 2500 * 10 ** 18;
+    function getUSDPrice() private view returns (uint256) {
+        (, int answer, , , ) = aggregator.latestRoundData();
+        return uint256(answer * 10 ** 10);
     }
 
     function dollarsToWei(

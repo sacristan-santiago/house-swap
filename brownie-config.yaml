@@ -1,14 +1,17 @@
 dependencies:
-  - smartcontractkit/chainlink-brownie-contracts@0.8.0
+  - smartcontractkit/chainlink@2.8.0
+ 
   - kleros/erc-792@8.0.0
 
 compiler:
   solc:
     remappings:
-    - '@chainlink=smartcontractkit/chainlink-brownie-contracts@0.8.0'
+    - '@chainlink=smartcontractkit/chainlink@2.8.0'
+    
     - '@kleros/erc-792=kleros/erc-792@8.0.0'
 
 dotenv: .env
 
 wallets:
   from_key: ${PRIVATE_KEY}
+
