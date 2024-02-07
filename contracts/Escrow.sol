@@ -2,9 +2,9 @@
 
 pragma solidity ^0.8.9;
 
-import {IArbitrable} from "../interfaces/IArbitrable.sol";
-import {IArbitrator} from  "../interfaces/IArbitrator.sol";
-import {IEvidence} from "../interfaces/IEvidence.sol";
+import {IArbitrable} from "@kleros/erc-792/contracts/IArbitrable.sol";
+import {IArbitrator} from "@kleros/erc-792/contracts/IArbitrator.sol";
+import {IEvidence} from "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
 
 contract Escrow is IArbitrable, IEvidence {
     enum Status {
@@ -52,7 +52,7 @@ contract Escrow is IArbitrable, IEvidence {
     IArbitrator arbitrator;
     mapping(uint256 => uint256) disputeIDtoTXID;
 
-    constructor (address _arbitrator) {
+    constructor(address _arbitrator) {
         arbitrator = IArbitrator(_arbitrator);
     }
 
@@ -60,7 +60,7 @@ contract Escrow is IArbitrable, IEvidence {
         address payable _payee,
         address payable _payer,
         uint256 _reclamationPeriod,
-        uint256 _arbitrationFeeDepositPeriod, 
+        uint256 _arbitrationFeeDepositPeriod,
         uint256 _cancelationPeriod
     ) public payable returns (uint256) {
         txs.push(
@@ -80,7 +80,7 @@ contract Escrow is IArbitrable, IEvidence {
             })
         );
 
-        return txs.length;
+        return txs.length - 1;
     }
 
     function releaseFunds(uint256 _txID) public {
@@ -90,7 +90,8 @@ contract Escrow is IArbitrable, IEvidence {
             revert InvalidStatus();
         }
         if (
-            block.timestamp - transaction.createdAt <= transaction.reclamationPeriod
+            block.timestamp - transaction.createdAt <=
+            transaction.reclamationPeriod
         ) {
             revert ReleasedTooEarly();
         }
@@ -105,10 +106,13 @@ contract Escrow is IArbitrable, IEvidence {
         if (transaction.status != Status.Initial) {
             revert InvalidStatus();
         }
-        if (caller != transaction.payer || caller != transaction.payee  ) {
+        if (caller != transaction.payer || caller != transaction.payee) {
             revert NotPayerNorPayee();
         }
-        if (block.timestamp - transaction.createdAt > transaction.cancelationPeriod) {
+        if (
+            block.timestamp - transaction.createdAt >
+            transaction.cancelationPeriod
+        ) {
             revert CanceledTooLate();
         }
 
@@ -119,7 +123,10 @@ contract Escrow is IArbitrable, IEvidence {
     function reclaimFunds(uint256 _txID) public payable {
         TX storage transaction = txs[_txID];
 
-        if (transaction.status != Status.Initial && transaction.status != Status.Reclaimed) {
+        if (
+            transaction.status != Status.Initial &&
+            transaction.status != Status.Reclaimed
+        ) {
             revert InvalidStatus();
         }
         if (msg.sender != transaction.payer) {
@@ -127,13 +134,21 @@ contract Escrow is IArbitrable, IEvidence {
         }
 
         if (transaction.status == Status.Reclaimed) {
-            if (block.timestamp - transaction.reclaimedAt <= transaction.arbitrationFeeDepositPeriod) {
+            if (
+                block.timestamp - transaction.reclaimedAt <=
+                transaction.arbitrationFeeDepositPeriod
+            ) {
                 revert PayeeDepositStillPending();
             }
-            transaction.payer.transfer(transaction.value + transaction.payerFeeDeposit);
+            transaction.payer.transfer(
+                transaction.value + transaction.payerFeeDeposit
+            );
             transaction.status = Status.Resolved;
         } else {
-            if (block.timestamp - transaction.createdAt > transaction.reclamationPeriod) {
+            if (
+                block.timestamp - transaction.createdAt >
+                transaction.reclamationPeriod
+            ) {
                 revert ReclaimedTooLate();
             }
 
@@ -156,7 +171,10 @@ contract Escrow is IArbitrable, IEvidence {
         }
 
         transaction.payeeFeeDeposit = msg.value;
-        transaction.disputeID = arbitrator.createDispute{value: msg.value}(numberOfRulingOptions, "");
+        transaction.disputeID = arbitrator.createDispute{value: msg.value}(
+            numberOfRulingOptions,
+            ""
+        );
         transaction.status = Status.Disputed;
         disputeIDtoTXID[transaction.disputeID] = _txID;
         emit Dispute(arbitrator, transaction.disputeID, _txID, _txID);
@@ -178,8 +196,13 @@ contract Escrow is IArbitrable, IEvidence {
         transaction.status = Status.Resolved;
 
         if (_ruling == uint256(RulingOptions.PayerWins))
-            transaction.payer.transfer(transaction.value + transaction.payerFeeDeposit);
-        else transaction.payee.transfer(transaction.value + transaction.payeeFeeDeposit);
+            transaction.payer.transfer(
+                transaction.value + transaction.payerFeeDeposit
+            );
+        else
+            transaction.payee.transfer(
+                transaction.value + transaction.payeeFeeDeposit
+            );
         emit Ruling(arbitrator, _disputeID, _ruling);
     }
 
@@ -190,34 +213,46 @@ contract Escrow is IArbitrable, IEvidence {
             revert InvalidStatus();
         }
 
-        if (msg.sender != transaction.payer && msg.sender != transaction.payee) {
+        if (
+            msg.sender != transaction.payer && msg.sender != transaction.payee
+        ) {
             revert ThirdPartyNotAllowed();
         }
         emit Evidence(arbitrator, _txID, msg.sender, _evidence);
     }
 
-    function remainingTimeToReclaim(uint256 _txID) public view returns (uint256) {
+    function remainingTimeToReclaim(
+        uint256 _txID
+    ) public view returns (uint256) {
         TX storage transaction = txs[_txID];
 
         if (transaction.status != Status.Initial) {
             revert InvalidStatus();
         }
         return
-            (block.timestamp - transaction.createdAt) > transaction.reclamationPeriod
+            (block.timestamp - transaction.createdAt) >
+                transaction.reclamationPeriod
                 ? 0
-                : (transaction.createdAt + transaction.reclamationPeriod - block.timestamp);
+                : (transaction.createdAt +
+                    transaction.reclamationPeriod -
+                    block.timestamp);
     }
 
-    function remainingTimeToDepositArbitrationFee(uint256 _txID) public view returns (uint256) {
+    function remainingTimeToDepositArbitrationFee(
+        uint256 _txID
+    ) public view returns (uint256) {
         TX storage transaction = txs[_txID];
 
         if (transaction.status != Status.Reclaimed) {
             revert InvalidStatus();
         }
         return
-            (block.timestamp - transaction.reclaimedAt) > transaction.arbitrationFeeDepositPeriod
+            (block.timestamp - transaction.reclaimedAt) >
+                transaction.arbitrationFeeDepositPeriod
                 ? 0
-                : (transaction.reclaimedAt + transaction.arbitrationFeeDepositPeriod - block.timestamp);
+                : (transaction.reclaimedAt +
+                    transaction.arbitrationFeeDepositPeriod -
+                    block.timestamp);
     }
 
     function getTransaction(uint256 _TX) public view returns (TX memory) {
